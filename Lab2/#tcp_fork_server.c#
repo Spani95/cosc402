@@ -1,0 +1,208 @@
+/**
+ * @file   tcp_easy_ipv4_server.c
+ * @author haibo zhang <haibo@cs.otago.ac.nz>
+ * 
+ * @brief  TCP server, easily accept TCP connections. (IPv4 addresses only)
+ * 
+ */
+
+#include "unp.h"
+
+
+/** 
+ * @brief Enable address-reuse on a socket prior to bind().
+ *
+ * This should generally be done on any socket that will be used by a server,
+ * otherwise EADDRINUSE will likely result if a server is restarted; this
+ * would be the case because of a previously connected socket which is still
+ * in the TIME WAIT state.
+ * 
+ * @param sock_fd Socket that has yet to be passed to bind().
+ * 
+ * @return 0 or -1 on error, in which case errno will be set.
+ */
+
+static inline int
+enable_reuse_address(
+    int sock_fd)
+{
+#ifndef TCP_EASY_NO_REUSE_ADDRESS
+  int on = 1;
+  if (setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof on) < 0)
+    return -1;
+#endif
+  return 0;
+}
+
+/** 
+ * @brief called by the sever to listen for connections overa socket address.
+ * bind server address and port 
+ */
+
+int                               /* listening socket or -1 on errr */
+tcp_easy_listen(
+    const char *interface,        /* interface to bind to */
+    const char *service,          /* string of port or serv name */
+    int listen_queue)             /* argument to listen(2) */
+{
+  int listen_fd;
+  struct sockaddr_in listen_on;
+  char ip_str[INET_ADDRSTRLEN];
+
+  // Copy your implementation in the first lab here //
+  if ((listen_fd = socket(AF_INET,SOCK_STREAM, 0)) < 0) perror("socket error") ;
+
+  bzero(&listen_on,sizeof listen_on);
+  listen_on.sin_family = AF_INET;
+  if (inet_pton(AF_INET, interface, &listen_on.sin_addr) <= 0)
+      err_quit("inet_pton error for %s\n", interface);
+
+  listen_on.sin_port = htons(strtoul(service, NULL, 10));
+  if (enable_reuse_address(listen_fd) < 0) err_quit("setsockopt error");
+
+  bind(listen_fd, (SA *) &listen_on, sizeof(listen_on));
+
+  listen(listen_fd, listen_queue);
+
+  /* START SKELETON */
+  /* COMPLETE_ME
+  *    convert the server IP address from network byte order to host byte order using inet_ntop();
+  *    convert the server port number from network byte order to host byteorder using ntohs();
+  *    output the following info to the standard output: Server ?? is ready to accept connecdtion via port ??;
+  /* END SKELETON */
+
+  if(!inet_ntop(AF_INET, (const void *) &listen_on.sin_addr, ip_str, sizeof ip_str)) err_quit("inet_ntop error");
+  uint16_t port_num = ntohs(service);
+  printf("Server %s is ready to accept connection via port %d\n", ip_str, port_num);
+   
+  return listen_fd;
+  
+}
+
+/** 
+ * @brief writing data in the given file to the socket.
+ */
+
+static int
+send_file_to_socket(
+                    int file_fd,
+                    int sock_fd)
+{
+    struct stat stat_buf;  /* hold information about input file */
+    off_t offset;      /* byte offset used by sendfile */
+    
+    fstat(file_fd, &stat_buf); /* get size and permissions of the source file */
+    
+    offset = 0;
+    if (sendfile(sock_fd, file_fd, &offset, stat_buf.st_size) < 0)
+        return -1;
+    
+    return 0;
+    
+}
+
+/** 
+ * @brief fork_server
+ * using fork() function to create a new process for each connection
+ */
+
+static int
+tcp_fork_server(
+    int listen_fd,
+    const char *filename)
+{
+    pid_t client_pid;
+    int connected_fd;
+    int file_fd;
+    struct sockaddr_in client_addr, saddr;
+    socklen_t client_addr_len = sizeof client_addr;
+    char ip_str[INET_ADDRSTRLEN];
+    
+  /* START SKELETON */
+  /* COMPLETE_ME
+  *   while (1) {
+  *     
+  *     accept one connection from the compmleted connection queue using accept(2)
+  *     creat a new process to deal with the accepted connection using fork();
+  *     If it is the child proces {
+  *          close the listen socket first, why?
+  *          open the txt file using open(2)
+  *          send the data in the txt file given in the filename using send_file_to_socket();
+  *          close the connection using close();
+  *          exit(0);
+  *     } else {
+  *          get the address of the peer connected to the socket using getpeername()
+  *          convert the IP address from network byte order to host byte order using inet_ntop();
+  *          convert the port number from network byte order to host byteorder using ntohs();
+  *          output the following info to the standard output: Client ?? connected to server via port ??;
+  *          close the connection using close();
+  *     }
+  *   }
+ 
+    * And at each stage, don't forget to check for failure.
+    
+ /* END SKELETON */
+    while(1) {
+        connected_fd = Accept(listen_fd,(struct sockaddr *) &client_addr, &client_addr_len);
+        if (connected_fd < 0) printf("accept error");
+        
+        if ((client_pid = fork()) < 0) perror("child error");
+        
+        else if(client_pid == 0) { //child process
+            close(listen_fd);
+            
+            if ((file_fd = open(filename, O_RDONLY)) < 0) perror("open failure\n");
+            
+            if (send_file_to_socket(file_fd, connected_fd) < 0)
+                err_quit("send to socket failure\n");
+            
+            close(connected_fd);
+            exit(0);
+        } else { //parent process
+            if(getpeername(connected_fd, (struct sockaddr *) &client_addr, &client_addr_len) < 0)
+                 err_sys("getpeername error\n");
+            
+             if(!inet_ntop(AF_INET,(const void *) &client_addr.sin_addr, ip_str, sizeof ip_str))
+                 err_quit("inet_ntop error");
+            
+              saddr.sin_port = ntohs(client_addr.sin_port);
+            printf("Client %s connected to server via port %d\n", ip_str, saddr.sin_port);
+            close(connected_fd);
+        }
+    }
+ 
+ // remove the following line after implementation
+   return -1;
+   
+}
+
+/**
+ * </pre>
+ *
+ * @param argc Number of arguments found in @c argv
+ * @param argv Command-line arguments.
+ *
+ * @return 0 on success, non-0 (typically -1) on failure.
+ *
+ * @internal
+ */
+
+int
+main(
+    int argc,
+    char *argv[])
+{
+  int sock_fd;
+
+    sock_fd = tcp_easy_listen(argv[1], argv[2], 100);
+    if (sock_fd < 0) {
+      printf("Failed to create TCP listening socket");
+      return -1;
+    }
+    tcp_fork_server(sock_fd, argv[3]);
+
+  return 0;
+}
+
+
+
